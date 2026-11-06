@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>classbuzz · 成绩管理</title>
+<link rel="stylesheet" href="/style.css">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%235b8cff'/%3E%3Cpath d='M9 16.5l5 5 9-11' fill='none' stroke='%23fff' stroke-width='3.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+</head>
+<body>
+<header class="top">
+  <span id="conn" class="dot"></span>
+  <b>classbuzz 成绩管理</b>
+  <span class="grow"></span>
+  <span>房间 <b id="hcode">----</b></span>
+  <span>在线 <b id="hpc">0</b></span>
+  <span class="grow"></span>
+  <a class="btn sm ghost" href="/host">返回教师端</a>
+</header>
+<main class="wide">
+  <div id="gate" class="card center">
+    <p class="muted">正在连接…</p>
+  </div>
+
+  <div id="body" class="hidden" style="display:flex;flex-direction:column;gap:14px">
+    <div class="card">
+      <h2>概览</h2>
+      <div class="kv">
+        <span>已进入 <b id="kJoined">0</b></span>
+        <span>答过题 <b id="kAnswered">0</b></span>
+        <span>平均分 <b id="kAvg">0</b></span>
+        <span>最高分 <b id="kMax">0</b></span>
+        <span>当前阶段 <b id="kPhase">待机</b></span>
+      </div>
+      <div class="row" style="margin-top:14px">
+        <a class="btn sm ghost" id="btnExport" href="#" download>导出成绩 CSV</a>
+        <button class="btn sm ghost" id="btnReload">刷新</button>
+        <span class="grow"></span>
+        <button class="btn sm danger" id="btnResetAll">全班成绩清零</button>
+      </div>
+      <p class="note hidden" id="guard" style="margin-top:10px;color:var(--bad)"></p>
+      <p class="note" style="margin-top:10px">
+        清零会同时抹掉总分、答题数与答对数，<b>且不可恢复</b>；对局记录仍留在 data/ 的 jsonl 里可复盘。
+        有题正在进行时不能清零（先收卷或作废）。
+      </p>
+    </div>
+
+    <div class="card">
+      <h2 style="display:flex;align-items:center;gap:10px">
+        成绩表 <span class="muted" id="cnt"></span>
+        <span class="grow"></span>
+        <select id="sortSel" style="width:auto;padding:6px 10px;font-size:14px">
+          <option value="score">按总分</option>
+          <option value="sid">按学号</option>
+          <option value="name">按姓名</option>
+          <option value="accuracy">按正确率</option>
+        </select>
+      </h2>
+      <div style="overflow:auto">
+        <table class="scores">
+          <thead><tr>
+            <th>#</th><th>学号</th><th>姓名</th>
+            <th class="num">总分</th><th class="num">答题</th><th class="num">答对</th>
+            <th class="num">正确率</th><th class="num">最快</th><th>状态</th><th></th>
+          </tr></thead>
+          <tbody id="tbody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</main>
+<div id="toast"></div>
+<script src="/net.js"></script>
+<script>
+'use strict';
+// $ / esc / toast / copyText 都来自 net.js（各页面共用，别再声明一遍——
+// 经典脚本里顶层 const 重名会直接 SyntaxError，整个脚本都不执行）。
+
+const TOKEN = localStorage.getItem('cb_host_token') || null;
+const S = { code: null, phase: 'idle', students: [], sort: 'score' };
+
+const buzz = new Buzz({
+  onOpen: () => {
+    if (!TOKEN) { gate('这台机器上没有教师凭证。先打开 <a href="/host" style="color:var(--acc)">教师端</a> 创建或进入房间，再来这里。'); return; }
+    buzz.send({ type: 'resume', token: TOKEN });
+  },
+  onStatus: s => $('#conn').className = 'dot ' + (s === 'online' ? 'on' : 'off'),
+});
+
+function gate(html) {
+  $('#gate').innerHTML = `<p class="muted">${html}</p>`;
+  $('#gate').classList.remove('hidden');
+  $('#body').classList.add('hidden');
+}
+
+buzz.on('sync', m => {
+  if (m.role !== 'host') { gate('当前凭证不是教师身份。'); return; }
+  S.code = m.snapshot.code;
+  afterRoom();
+  pull();
+});
+buzz.on('resume_fail', () => gate('凭证已失效（房间可能已重建）。回 <a href="/host" style="color:var(--acc)">教师端</a> 重新进入。'));
+buzz.on('host_scores', m => {
+  S.phase = m.phase;
+  S.students = m.students || [];
+  S.rosterSize = m.rosterSize;
+  S.strict = m.strict;
+  render();
+});
+buzz.on('error', m => {
+  toast(m.message || '操作失败');
+  // 清零被拒（有题在进行）时，把原因钉在概览卡上——toast 会消失，这个不会
+  if (/有题正在进行/.test(m.message || '')) {
+    const g = $('#guard');
+    g.textContent = m.message;
+    g.classList.remove('hidden');
+  }
+});
+// 有人进出房、收卷、作废 → 重新拉一份（成绩页以拉代推，简单且不会漏）
+buzz.on('room_state', () => pull());
+buzz.on('question_result', () => pull());
+buzz.on('scores_reset', () => { $('#guard').classList.add('hidden'); pull(); });
+
+function pull() { buzz.send({ type: 'host_scores' }); }
+
+function afterRoom() {
+  $('#hcode').textContent = S.code || '----';
+  $('#btnExport').href = `/export/${S.code}?token=${TOKEN}`;
+  $('#gate').classList.add('hidden');
+  $('#body').classList.remove('hidden');
+}
+
+const PHASE = { idle: '待机', open: '答题中', revealed: '已揭晓' };
+const fmtSec = ms => (ms / 1000).toFixed(1) + 's';
+
+function sorted() {
+  const rows = S.students.slice();
+  const by = S.sort;
+  rows.sort((a, b) => {
+    if (by === 'sid') return (a.sid || '').localeCompare(b.sid || '', 'zh') || a.name.localeCompare(b.name, 'zh');
+    if (by === 'name') return a.name.localeCompare(b.name, 'zh');
+    if (by === 'accuracy') return acc(b) - acc(a) || b.score - a.score;
+    return b.score - a.score || (a.sid || '').localeCompare(b.sid || '', 'zh');
+  });
+  return rows;
+}
+const acc = r => (r.answers ? r.correct / r.answers : 0);
+
+function render() {
+  const rows = sorted();
+  const joined = rows.filter(r => r.firstSeen != null);
+  const answered = joined.filter(r => r.answers > 0);
+  const scores = answered.map(r => r.score);
+  $('#kJoined').textContent = `${joined.length}/${S.rosterSize ?? joined.length}`;
+  $('#kAnswered').textContent = String(answered.length);
+  $('#kAvg').textContent = scores.length ? (scores.reduce((a, b) => a + b, 0) / scores.length).toFixed(1) : '0';
+  $('#kMax').textContent = scores.length ? String(Math.max(...scores)) : '0';
+  $('#kPhase').textContent = PHASE[S.phase] || S.phase;
+  $('#hpc').textContent = String(joined.filter(r => r.online).length);
+  $('#cnt').textContent = `共 ${rows.length} 人`;
+
+  $('#tbody').innerHTML = rows.map((r, i) => {
+    const absent = r.firstSeen == null;
+    const status = absent
+      ? '<span class="tag absent">未进入</span>'
+      : r.online ? '<span class="tag on">在线</span>' : '<span class="tag">已离开</span>';
+    const flag = r.offRoster ? '<span class="tag warn">名单外</span> ' : '';
+    return `<tr class="${absent ? 'absent' : ''}">
+      <td class="muted">${i + 1}</td>
+      <td>${esc(r.sid || '—')}</td>
+      <td>${flag}${esc(r.name)}</td>
+      <td class="num sc">${r.score}</td>
+      <td class="num">${r.answers}</td>
+      <td class="num">${r.correct}</td>
+      <td class="num">${r.answers ? Math.round(acc(r) * 100) + '%' : '—'}</td>
+      <td class="num">${r.fastestMs != null ? fmtSec(r.fastestMs) : '—'}</td>
+      <td>${status}</td>
+      <td class="num">${absent ? '' : `<button class="btn sm ghost" data-sid="${esc(r.sid || r.name)}">清零</button>`}</td>
+    </tr>`;
+  }).join('');
+
+  $('#tbody').querySelectorAll('button[data-sid]').forEach(b => {
+    b.onclick = () => resetOne(b.dataset.sid);
+  });
+  // 有题在进行中：清零按钮一律禁用（服务端也会拒，但别让老师白点）
+  const live = S.phase === 'open';
+  $('#btnResetAll').disabled = live;
+  $('#guard').classList.toggle('hidden', !live);
+  if (live) $('#guard').textContent = '有题正在进行，先收卷或作废再清零。';
+}
+
+function resetOne(sid) {
+  const r = S.students.find(x => (x.sid || x.name) === sid);
+  if (!r) return;
+  if (!confirm(`把「${r.name}」的成绩清零？\n\n总分、答题数、答对数都会归零，不可恢复。`)) return;
+  buzz.send({ type: 'host_reset_player', sid });
+}
+
+$('#btnResetAll').onclick = () => {
+  const joined = S.students.filter(r => r.firstSeen != null).length;
+  if (!confirm(`全班 ${joined} 人的成绩全部清零？\n\n这会抹掉所有人的总分与答题统计，不可恢复。\n学生仍在房间里，名单不变，房间号不变。`)) return;
+  buzz.send({ type: 'host_reset_scores' });
+};
+$('#btnReload').onclick = pull;
+$('#sortSel').onchange = e => { S.sort = e.target.value; render(); };
+
+buzz.connect();
+</script>
+</body>
+</html>

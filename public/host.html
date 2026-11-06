@@ -1,0 +1,354 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>classbuzz · 教师端</title>
+<link rel="stylesheet" href="/style.css">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%235b8cff'/%3E%3Cpath d='M9 16.5l5 5 9-11' fill='none' stroke='%23fff' stroke-width='3.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+</head>
+<body>
+<header class="top">
+  <span id="conn" class="dot"></span>
+  <b>classbuzz 教师端</b>
+  <span class="grow"></span>
+  <span>房间 <b id="hcode">----</b></span>
+  <span>在线 <b id="hpc">0</b></span>
+</header>
+<main>
+  <div class="card">
+    <h2>房间</h2>
+    <div class="row">
+      <a class="btn sm ghost" id="btnBoard" href="#" target="_blank">打开大屏</a>
+      <a class="btn sm ghost" id="btnScores" href="/scores" target="_blank">成绩管理</a>
+      <a class="btn sm ghost" id="btnExport" href="#" download>导出成绩 CSV</a>
+      <button class="btn sm ghost" id="btnQr">入房二维码</button>
+      <button class="btn sm ghost" id="btnCopy">复制入房链接</button>
+    </div>
+    <div class="row" style="margin-top:12px;align-items:center;gap:8px">
+      <span class="muted">房口令</span>
+      <b id="hpass" style="font-family:ui-monospace,Menlo,Consolas,monospace;font-size:18px;letter-spacing:2px">------</b>
+      <button class="btn sm ghost" id="btnPass">复制口令</button>
+      <span class="muted" style="font-size:12px">第二个教师端（如 md2slides 放映）凭「房间号 + 口令」接入</span>
+    </div>
+    <div class="row" style="margin-top:12px">
+      <div class="qrbox hidden" id="qrbox"><img id="qrimg" alt="入房二维码"></div>
+    </div>
+    <p class="note" id="joinurl" style="margin-top:10px;word-break:break-all"></p>
+    <div class="row" style="margin-top:8px;align-items:center">
+      <label class="f" style="margin:0">学生访问地址
+        <select id="ipSel" style="margin-left:6px;max-width:240px"></select>
+      </label>
+      <span class="muted" style="margin-left:8px">学生手机扫到的就是这个地址</span>
+    </div>
+    <div class="row" style="margin-top:8px;align-items:center">
+      <label class="f" style="margin:0">或填公网/穿透地址
+        <input id="customUrl" type="text" placeholder="https://abc.loca.lt 或部署后的网址" style="margin-left:6px;width:260px">
+      </label>
+      <span class="muted" style="margin-left:8px">无公网IP/不同网络时填这里（配合内网穿透或云部署）</span>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>学生名单 <span id="rosterInfo" class="muted">未导入（自由昵称模式）</span></h2>
+    <textarea id="rosterText" rows="5" placeholder="从 Excel 全选「学号、姓名」两列，复制后粘贴到这里。每行一个学生，也支持逗号分隔。"></textarea>
+    <div class="row" style="margin-top:10px">
+      <button class="btn sm" id="btnRoster">导入名单</button>
+      <button class="btn sm ghost" id="btnRosterCache">载入上次名单</button>
+      <button class="btn sm ghost" id="btnRosterClear">清空名单</button>
+      <label class="chk"><input type="checkbox" id="chkStrict" checked> 学号必须在名单内</label>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>出题 <span class="muted">队列 <b id="qcount">0</b> 题</span></h2>
+    <div class="row" style="margin-bottom:8px">
+      <button class="btn" id="btnOpenNext" disabled>开下一题（队列）</button>
+      <button class="btn sm ghost" id="btnQueueClear">清空队列</button>
+    </div>
+    <div id="queueList" class="row" style="flex-direction:column;align-items:stretch;margin-bottom:12px"></div>
+    <label class="f">批量导入：粘贴题目 JSON（数组，字段 stem / options / answer(字母或序号) / limitSec）</label>
+    <textarea id="jsonText" rows="4" placeholder='[{"stem":"1+1=?","options":["1","2","3","4"],"answer":"B","limitSec":30}]'></textarea>
+    <div class="row" style="margin-top:8px"><button class="btn sm ghost" id="btnParse">解析入队</button></div>
+    <hr class="sep">
+    <label class="f">或现场录入一道题</label>
+    <input type="text" id="fStem" placeholder="题干">
+    <div class="grid4" style="margin-top:10px">
+      <input type="text" id="fO0" placeholder="A 选项">
+      <input type="text" id="fO1" placeholder="B 选项">
+      <input type="text" id="fO2" placeholder="C 选项">
+      <input type="text" id="fO3" placeholder="D 选项">
+    </div>
+    <div class="row" style="margin-top:10px">
+      <label class="f" style="margin:0">答案
+        <select id="fAns" style="width:70px;margin-left:6px">
+          <option value="0">A</option><option value="1">B</option>
+          <option value="2">C</option><option value="3">D</option>
+        </select>
+      </label>
+      <label class="f" style="margin:0">限时(秒)
+        <input type="number" id="fLimit" value="30" min="5" max="300" style="width:84px;margin-left:6px">
+      </label>
+      <span class="grow"></span>
+      <button class="btn ok" id="btnOpenManual">直接开题</button>
+    </div>
+  </div>
+
+  <div class="card" id="liveCard">
+    <h2>进行中</h2>
+    <div id="live"><p class="muted">待机中。开题后这里显示实时提交进度。</p></div>
+  </div>
+</main>
+<div id="toast"></div>
+<script src="/net.js"></script>
+<script>
+'use strict';
+const HS = { code: null, token: localStorage.getItem('cb_host_token') || null,
+  passcode: null, phase: 'idle', rosterSize: 0, strict: true, queue: [], pc: 0 };
+
+const buzz = new Buzz({
+  onOpen: () => {
+    if (HS.token) buzz.send({ type: 'resume', token: HS.token });
+    else buzz.send({ type: 'host_create' });
+  },
+  onStatus: s => $('#conn').className = 'dot ' + (s === 'online' ? 'on' : 'off'),
+});
+
+buzz.on('host_ok', m => {
+  HS.token = m.token; HS.code = m.room;
+  HS.passcode = m.snapshot?.passcode || null;
+  localStorage.setItem('cb_host_token', m.token);
+  afterRoom();
+  renderLive(m.snapshot);
+});
+buzz.on('sync', m => {
+  if (m.role !== 'host') return;
+  HS.code = m.snapshot.code;
+  if (m.snapshot.passcode) HS.passcode = m.snapshot.passcode;
+  afterRoom();
+  renderLive(m.snapshot);
+});
+buzz.on('resume_fail', () => { HS.token = null; localStorage.removeItem('cb_host_token'); buzz.send({ type: 'host_create' }); });
+buzz.on('error', m => toast(m.message || '操作失败'));
+
+buzz.on('roster_ok', m => {
+  HS.rosterSize = m.count; HS.strict = m.strict;
+  $('#rosterInfo').textContent = m.count ? `已导入 ${m.count} 人（${m.strict ? '严格校验' : '名单外放行'}）` : '未导入（自由昵称模式）';
+  $('#chkStrict').checked = m.strict;
+  toast(m.count ? `名单已导入 ${m.count} 人` : '名单已清空');
+});
+buzz.on('question_open', m => { HS.phase = 'open'; renderLive({ phase: 'open', question: { ...m, answered: 0, total: HS.pc } }); });
+buzz.on('progress', m => {
+  const n = $('#liveN'); if (n) n.textContent = m.answered;
+  const b = $('#liveBar'); if (b) b.style.width = (m.total ? m.answered / m.total * 100 : 0) + '%';
+  const t = $('#liveTotal'); if (t) t.textContent = m.total;
+});
+buzz.on('question_result', m => { HS.phase = 'revealed'; renderLive({ phase: 'revealed', lastResult: m }); });
+buzz.on('round_closed', () => { HS.phase = 'idle'; renderLive({ phase: 'idle' }); toast('本题已作废，不计分'); });
+buzz.on('room_state', m => { HS.pc = m.playerCount; $('#hpc').textContent = m.playerCount; });
+
+function afterRoom() {
+  $('#hcode').textContent = HS.code;
+  $('#hpass').textContent = HS.passcode || '------';
+  $('#btnBoard').href = `/board?room=${HS.code}`;
+  $('#btnExport').href = `/export/${HS.code}?token=${HS.token}`;
+  const cached = localStorage.getItem('cb_roster');
+  if (cached) $('#btnRosterCache').classList.remove('hidden');
+  loadQueue();
+  fetch('/lan').then(r => r.json()).then(({ ips, local }) => {
+    // 候选地址：优先「教师实际访问进来用的 IP」(local，最可靠)，再按网卡顺序，最后兜底 localhost
+    const candidates = [];
+    const seen = new Set();
+    const push = h => { if (h && !seen.has(h)) { seen.add(h); candidates.push(h); } };
+    if (local) push(local);
+    (ips || []).forEach(push);
+    push('localhost');
+    HS.joinCandidates = candidates;
+    const sel = $('#ipSel');
+    sel.innerHTML = candidates.map(h =>
+      `<option value="${esc(h)}">${esc(h === 'localhost' ? '本机 localhost（仅自己测试）' : h)}</option>`).join('');
+    const def = local || candidates.find(c => c !== 'localhost') || 'localhost';
+    sel.value = def;
+    sel.onchange = () => setJoinHost(sel.value);
+    setJoinHost(def);
+  }).catch(() => {});
+}
+
+function setJoinHost(host) {
+  let base;
+  if (HS.customBase) {
+    // 公网/穿透地址：直接用，scheme/端口以粘贴的为准
+    base = HS.customBase.replace(/\/+$/, '');
+  } else {
+    const port = location.port ? ':' + location.port : '';
+    base = `http://${host}${port}`;
+  }
+  HS.joinUrl = `${base}/?room=${HS.code}`;
+  $('#joinurl').textContent = '入房链接：' + HS.joinUrl;
+  $('#qrimg').src = '/qr?text=' + encodeURIComponent(HS.joinUrl);
+}
+
+$('#customUrl').oninput = e => {
+  HS.customBase = e.target.value.trim();
+  setJoinHost($('#ipSel').value); // 自定义地址优先；这里仅触发重算
+};
+
+// 自动确定「学生访问地址」：?public= > 服务端 public-url.txt > 页面自身域名（仅当本身在公网）
+// 这样老师不管从哪个入口打开教师页，二维码里都是公网地址，而不是局域网。
+(async function () {
+  const inp = $('#customUrl');
+  if (inp.value.trim()) return; // 老师已经手动填过，不覆盖
+  const priv = /^(localhost|127\.0\.0\.1|0\.0\.0\.0|::1)$|^192\.168\.|^10\.|^172\.(1[6-9]|2\d|3[01])\./;
+  let base = new URLSearchParams(location.search).get('public') || '';
+  if (!base) {
+    try {
+      const r = await fetch('/api/config', { cache: 'no-store' });
+      if (r.ok) base = (await r.json()).publicBase || '';
+    } catch {}
+  }
+  if (!base && !priv.test(location.hostname)) base = location.origin;
+  if (!base) return;
+  inp.value = base.replace(/\/+$/, '');
+  inp.dispatchEvent(new Event('input'));
+})();
+
+/* 名单 */
+$('#btnRoster').onclick = () => {
+  const rows = parseRoster($('#rosterText').value);
+  if (!rows.length) return toast('没有解析到「学号 姓名」行');
+  buzz.send({ type: 'host_import_roster', rows });
+  localStorage.setItem('cb_roster', JSON.stringify(rows));
+};
+$('#btnRosterCache').onclick = () => {
+  const cached = localStorage.getItem('cb_roster');
+  if (!cached) return toast('本机没有缓存的名单');
+  $('#rosterText').value = JSON.parse(cached).map(r => r.join('\t')).join('\n');
+  buzz.send({ type: 'host_import_roster', rows: JSON.parse(cached) });
+};
+$('#btnRosterClear').onclick = () => {
+  buzz.send({ type: 'host_import_roster', rows: [] });
+  $('#rosterText').value = '';
+};
+$('#chkStrict').onchange = e => buzz.send({ type: 'host_set_strict', strict: e.target.checked });
+
+function parseRoster(text) {
+  const rows = [];
+  for (const line of String(text || '').split(/\r?\n/)) {
+    if (!line.trim()) continue;
+    const parts = line.trim().split(/\t|,|，/);
+    if (parts.length >= 2 && parts[0] && parts[1]) rows.push([parts[0].trim(), parts[1].trim()]);
+  }
+  return rows;
+}
+
+/* 题目队列 */
+function loadQueue() {
+  try { HS.queue = JSON.parse(localStorage.getItem('cb_queue') || '[]'); } catch { HS.queue = []; }
+  renderQueue();
+}
+function saveQueue() { localStorage.setItem('cb_queue', JSON.stringify(HS.queue)); renderQueue(); }
+
+$('#btnParse').onclick = () => {
+  let items;
+  try { items = parseQueue($('#jsonText').value); }
+  catch (e) { return toast('解析失败：' + e.message); }
+  HS.queue.push(...items);
+  saveQueue();
+  $('#jsonText').value = '';
+  toast(`已入队 ${items.length} 题`);
+};
+$('#btnQueueClear').onclick = () => { HS.queue = []; saveQueue(); };
+$('#btnOpenNext').onclick = () => {
+  if (!HS.queue.length) return;
+  const q = HS.queue.shift();
+  saveQueue();
+  buzz.send({ type: 'host_open', ...q });
+};
+$('#btnOpenManual').onclick = () => {
+  const q = {
+    stem: $('#fStem').value,
+    options: [$('#fO0').value, $('#fO1').value, $('#fO2').value, $('#fO3').value],
+    answer: Number($('#fAns').value),
+    limitSec: Number($('#fLimit').value) || 30,
+  };
+  buzz.send({ type: 'host_open', ...q });
+};
+
+function parseQueue(text) {
+  const arr = JSON.parse(text);
+  if (!Array.isArray(arr)) throw new Error('需要数组');
+  return arr.map((q, i) => {
+    const options = (q.options || []).map(String);
+    let answer = q.answer;
+    if (typeof answer === 'string' && /^[A-Fa-f]$/.test(answer)) answer = answer.toUpperCase().charCodeAt(0) - 65;
+    answer = Number(answer);
+    if (!q.stem || options.length < 2 || !(answer >= 0 && answer < options.length)) {
+      throw new Error(`第 ${i + 1} 题缺少题干/选项/答案`);
+    }
+    return { stem: String(q.stem), options, answer, limitSec: Number(q.limitSec) || 30 };
+  });
+}
+
+function renderQueue() {
+  $('#qcount').textContent = HS.queue.length;
+  $('#btnOpenNext').disabled = !HS.queue.length;
+  $('#queueList').innerHTML = HS.queue.map((q, i) => `
+    <div class="qitem"><span class="qt">${i + 1}. ${esc(q.stem)}</span>
+    <button class="btn sm ghost" data-del="${i}">删</button></div>`).join('');
+  $('#queueList').querySelectorAll('[data-del]').forEach(b =>
+    b.onclick = () => { HS.queue.splice(+b.dataset.del, 1); saveQueue(); });
+}
+
+/* 实时区 */
+function renderLive(s) {
+  if (s.phase) HS.phase = s.phase;
+  if (s.rosterSize != null) {
+    HS.rosterSize = s.rosterSize; HS.strict = s.strict;
+    $('#rosterInfo').textContent = s.rosterSize ? `已导入 ${s.rosterSize} 人（${s.strict ? '严格校验' : '名单外放行'}）` : '未导入（自由昵称模式）';
+    $('#chkStrict').checked = s.strict;
+  }
+  if (s.playerCount != null) { HS.pc = s.playerCount; $('#hpc').textContent = s.playerCount; }
+  const el = $('#live');
+  if (HS.phase === 'open' && s.question) {
+    const q = s.question;
+    el.innerHTML = `<div class="stem">${esc(q.stem)}</div>
+      <div class="center" style="margin:14px 0">已提交 <span id="liveN" class="bignum" style="color:var(--acc)">${q.answered}</span> / <span id="liveTotal">${q.total}</span> 人</div>
+      <div class="bar"><i id="liveBar" style="width:${q.total ? q.answered / q.total * 100 : 0}%"></i></div>
+      <div class="row" style="margin-top:16px">
+        <button class="btn ok" id="btnClose">提前收卷</button>
+        <button class="btn danger" id="btnAbort">作废本题</button>
+      </div>`;
+    $('#btnClose').onclick = () => buzz.send({ type: 'host_close' });
+    $('#btnAbort').onclick = () => { if (confirm('作废本题？已提交的本题得分将回滚。')) buzz.send({ type: 'host_abort' }); };
+  } else if (HS.phase === 'revealed' && s.lastResult) {
+    const r = s.lastResult;
+    el.innerHTML = `<p>正确答案：<b style="color:var(--ok)">${'ABCDEF'[r.answer]} · ${esc(r.options[r.answer])}</b></p>
+      ${r.fastest ? `<p class="muted" style="margin-top:6px">⚡ 最快：${esc(r.fastest.name)} ${(r.fastest.elapsedMs / 1000).toFixed(1)}s</p>` : ''}
+      <div class="lb" style="margin-top:10px">${r.leaderboard.slice(0, 5).map(e => `
+        <div class="lbrow"><span class="rk">${e.rank}</span><span class="nm">${esc(e.name)}</span><span class="sc">${e.score}</span></div>`).join('')}</div>
+      <div class="row" style="margin-top:14px">
+        <button class="btn" id="btnNext" ${HS.queue.length ? '' : 'disabled'}>开下一题（队列 ${HS.queue.length} 题）</button>
+      </div>`;
+    const n = $('#btnNext'); if (n) n.onclick = () => $('#btnOpenNext').click();
+  } else {
+    el.innerHTML = `<p class="muted">待机中。开题后这里显示实时提交进度。</p>
+      ${HS.queue.length ? `<p class="note" style="margin-top:8px">队列里有 ${HS.queue.length} 题，点「开下一题（队列）」即可。</p>` : ''}`;
+  }
+}
+
+/* 房间工具 */
+$('#btnQr').onclick = () => $('#qrbox').classList.toggle('hidden');
+$('#btnCopy').onclick = async () => {
+  if (!HS.joinUrl) return toast('尚未拿到入房链接');
+  toast((await copyText(HS.joinUrl)) ? '已复制入房链接' : '复制失败，请手动选择');
+};
+// 房口令：老师抄到 md2slides 的竞答配置里（房间号 + 口令 → 第二个教师端接入）
+$('#btnPass').onclick = async () => {
+  if (!HS.passcode) return toast('尚未拿到房口令');
+  toast((await copyText(HS.passcode)) ? `已复制房口令 ${HS.passcode}` : '复制失败，请手动选择');
+};
+
+buzz.connect();
+</script>
+</body>
+</html>

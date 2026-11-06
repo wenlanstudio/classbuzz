@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>classbuzz · 答题</title>
+<link rel="stylesheet" href="/style.css">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%235b8cff'/%3E%3Cpath d='M9 16.5l5 5 9-11' fill='none' stroke='%23fff' stroke-width='3.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+</head>
+<body>
+<header class="top">
+  <span id="conn" class="dot"></span>
+  <span>房间 <b id="hcode">----</b></span>
+  <span>在线 <b id="hpc">0</b></span>
+  <span class="grow"></span>
+  <span>已交 <b id="hprog">0/0</b></span>
+</header>
+<main id="view"><div class="card center">连接中…</div></main>
+<footer class="mebar">
+  <div><b id="mename">—</b> <span id="merank" class="muted"></span></div>
+  <div class="score"><span id="mescore">0</span><small>分</small></div>
+</footer>
+<div id="toast"></div>
+<script src="/net.js"></script>
+<script>
+'use strict';
+const P = JSON.parse(localStorage.getItem('cb_profile') || 'null');
+if (!P || !P.room) location.replace('/');
+
+const S = {
+  phase: 'idle', me: { name: '—', score: 0, rank: null },
+  question: null, myAnswer: null, lastResult: null, self: null,
+  answered: 0, total: 0, pending: false,
+};
+
+const buzz = new Buzz({
+  onOpen: () => {
+    const t = localStorage.getItem('cb_token');
+    if (t) buzz.send({ type: 'resume', token: t });
+    else buzz.send({ type: 'join', room: P.room, sid: P.sid, name: P.name });
+  },
+  onStatus: s => $('#conn').className = 'dot ' + (s === 'online' ? 'on' : 'off'),
+});
+
+buzz.on('join_ok', m => { if (m.role !== 'player') return; localStorage.setItem('cb_token', m.token); apply(m.snapshot); });
+buzz.on('sync', m => { if (m.role === 'player') apply(m.snapshot); });
+buzz.on('resume_fail', () => {
+  localStorage.removeItem('cb_token');
+  buzz.send({ type: 'join', room: P.room, sid: P.sid, name: P.name });
+});
+buzz.on('join_fail', m => fatal(m.reason));
+buzz.on('replaced', () => fatal('该学号已在其他设备进入，本机已退出'));
+buzz.on('error', m => toast(m.message || '操作失败'));
+
+buzz.on('question_open', m => {
+  S.phase = 'open'; S.question = m; S.myAnswer = null; S.self = null; S.pending = false;
+  S.answered = 0; S.total = m.total || 0;
+  render();
+});
+buzz.on('progress', m => { S.answered = m.answered; $('#hprog').textContent = `${m.answered}/${m.total}`; });
+buzz.on('answer_ack', m => {
+  if (m.accepted) { S.myAnswer = m.choice ?? S.myAnswer; S.pending = false; render(); }
+  else { S.pending = false; toast(m.reason || '提交失败'); render(); }
+});
+buzz.on('question_result', m => { S.phase = 'revealed'; S.lastResult = m; render(); });
+buzz.on('self_result', m => {
+  S.self = m;
+  S.me.score = m.score; S.me.rank = m.rank;
+  $('#mescore').textContent = m.score;
+  $('#merank').textContent = m.rank ? `第 ${m.rank} 名` : '';
+  if (S.phase === 'revealed') render();
+});
+buzz.on('round_closed', () => { S.phase = 'idle'; S.question = null; S.lastResult = null; toast('本题已作废，不计分'); render(); });
+buzz.on('room_state', m => { $('#hpc').textContent = m.playerCount; });
+// 老师清了成绩：手机上挂着的旧分数必须同步刷新，否则学生会以为"分怎么没了/还在"
+buzz.on('self_score', m => {
+  S.me.score = m.score; S.me.rank = m.rank;
+  $('#mescore').textContent = m.score;
+  $('#merank').textContent = m.rank ? `第 ${m.rank} 名` : '';
+});
+
+function apply(s) {
+  S.phase = s.phase;
+  S.me = s.me || S.me;
+  S.question = s.question;
+  S.myAnswer = s.myAnswer;
+  S.lastResult = s.lastResult;
+  S.answered = s.question ? s.question.answered : 0;
+  S.total = s.question ? s.question.total : s.playerCount;
+  $('#hcode').textContent = s.code || P.room;
+  $('#hpc').textContent = s.playerCount || 0;
+  $('#hprog').textContent = `${S.answered}/${S.total}`;
+  $('#mename').textContent = S.me.name;
+  $('#mescore').textContent = S.me.score;
+  $('#merank').textContent = S.me.rank ? `第 ${S.me.rank} 名` : '';
+  render();
+}
+
+const LETTERS = 'ABCDEF';
+function optionRow(i, text, cls) {
+  return `<button class="opt o${i} ${cls || ''}" data-i="${i}">
+    <span class="abc">${LETTERS[i]}</span><span>${esc(text)}</span></button>`;
+}
+
+function render() {
+  const v = $('#view');
+  document.body.dataset.phase = S.phase;
+  if (S.phase === 'open' && S.question) {
+    const q = S.question;
+    if (q.blocked) {
+      v.innerHTML = `<div class="card center"><div class="stem">${esc(q.stem)}</div>
+        <hr class="sep"><p class="muted">本题进行中，你是开题后进来的——下一题可参与，先热热身。</p></div>`;
+      return;
+    }
+    if (S.myAnswer != null) {
+      v.innerHTML = `<div class="card"><div class="stem">${esc(q.stem)}</div>
+        <hr class="sep">
+        <div class="opts">${q.options.map((t, i) =>
+          optionRow(i, t, i === S.myAnswer ? 'mine locked' : 'locked')).join('')}</div>
+        <hr class="sep">
+        <p class="center muted">已提交，等待其他同学 / 揭晓…</p>
+        <div class="bar" style="margin-top:10px"><i style="width:${pct()}%"></i></div>
+      </div>`;
+    } else {
+      v.innerHTML = `<div class="card">
+        <div class="row" style="justify-content:space-between">
+          <span class="muted">限时 <b id="cdsec">${cdRemain()}</b> 秒</span>
+          <span class="muted">答对保底 60，越快越高</span>
+        </div>
+        <div class="bar cd" style="margin:8px 0 14px"><i id="cdbar"></i></div>
+        <div class="stem">${esc(q.stem)}</div>
+        <hr class="sep">
+        <div class="opts">${q.options.map((t, i) => optionRow(i, t)).join('')}</div>
+      </div>`;
+      v.querySelectorAll('.opt').forEach(el => el.onclick = () => submit(+el.dataset.i));
+    }
+    return;
+  }
+  if (S.phase === 'revealed' && S.lastResult) {
+    const r = S.lastResult;
+    const top = r.leaderboard.slice(0, 10);
+    const distMax = Math.max(1, ...r.distribution);
+    const mine = S.self;
+    v.innerHTML = `<div class="card">
+      ${mine ? (mine.correct
+        ? `<div class="verdict good">✓ 答对了 +${mine.gained} 分</div>`
+        : `<div class="verdict poor">✗ 答错了，本题 0 分</div>`) : ''}
+      <div class="dist">${r.options.map((t, i) => `
+        <div class="drow ${i === r.answer ? 'hit' : ''}">
+          <b class="abc" style="background:var(--o${i});border-radius:50%;width:30px;height:30px;display:flex;align-items:center;justify-content:center">${LETTERS[i]}</b>
+          <div class="dtrack"><div class="dbar" style="width:${r.distribution[i] / distMax * 100}%;background:var(--o${i})"></div></div>
+          <span class="dn">${r.distribution[i]} 人</span>
+        </div>`).join('')}</div>
+      ${r.fastest ? `<p class="center" style="margin-top:12px">⚡ 本题最快：<b>${esc(r.fastest.name)}</b> ${(r.fastest.elapsedMs / 1000).toFixed(1)}s</p>` : ''}
+    </div>
+    <div class="card">
+      <h2>排行榜</h2>
+      <div class="lb">${top.map(e => `
+        <div class="lbrow ${S.me.name === e.name && S.me.sid === e.sid ? 'me' : ''}">
+          <span class="rk">${e.rank}</span><span class="nm">${esc(e.name)}</span><span class="sc">${e.score}</span>
+        </div>`).join('')}</div>
+      <p class="center muted" style="margin-top:10px">等待老师开下一题…</p>
+    </div>`;
+    return;
+  }
+  v.innerHTML = `<div class="card center" style="padding:40px 18px">
+    <p class="bignum">🎓</p>
+    <p style="margin-top:8px">等待老师出题</p>
+    <p class="muted" style="margin-top:6px">开题后点选项作答，越快分越高</p>
+  </div>`;
+}
+
+function pct() { return S.total ? Math.round(S.answered / S.total * 100) : 0; }
+function cdRemain() {
+  if (!S.question) return 0;
+  return Math.max(0, Math.ceil((S.question.deadline - Date.now()) / 1000));
+}
+setInterval(() => {
+  if (S.phase !== 'open' || !S.question) return;
+  const total = S.question.limitSec * 1000;
+  const remain = Math.max(0, S.question.deadline - Date.now());
+  const bar = $('#cdbar'), sec = $('#cdsec');
+  if (bar) bar.style.width = (remain / total * 100) + '%';
+  if (sec) sec.textContent = cdRemain();
+}, 200);
+
+function submit(i) {
+  if (S.pending || S.myAnswer != null) return;
+  S.pending = true;
+  buzz.send({ type: 'answer', choice: i });
+}
+
+function fatal(msg) {
+  buzz.close();
+  $('#view').innerHTML = `<div class="card center" style="padding:40px 18px">
+    <p class="bignum">😔</p><p style="margin:10px 0">${esc(msg)}</p>
+    <a class="btn ghost" href="/">返回首页</a></div>`;
+  $('#view').parentElement;
+}
+
+buzz.connect();
+</script>
+</body>
+</html>

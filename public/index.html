@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>classbuzz · 课堂竞答</title>
+<link rel="stylesheet" href="/style.css">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%235b8cff'/%3E%3Cpath d='M9 16.5l5 5 9-11' fill='none' stroke='%23fff' stroke-width='3.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+</head>
+<body>
+<header class="top">
+  <b>classbuzz</b><span>课堂客观题 · 全员竞答</span>
+</header>
+<main>
+  <div class="card">
+    <h2>学生进入</h2>
+    <form id="stuForm">
+      <label class="f" for="room">房间号（老师屏幕上的 4 位码）</label>
+      <input id="room" type="text" inputmode="numeric" autocomplete="off"
+             maxlength="4" placeholder="如 7K2M" style="text-transform:uppercase">
+      <label class="f" for="sid">学号</label>
+      <input id="sid" type="text" inputmode="numeric" autocomplete="off" placeholder="你的学号">
+      <label class="f" for="name">姓名（选填，仅无名单的房间需要）</label>
+      <input id="name" type="text" autocomplete="off" placeholder="无名单房间填写">
+      <div style="margin-top:16px">
+        <button class="btn block" type="submit">进入房间</button>
+      </div>
+    </form>
+  </div>
+  <div class="card center">
+    <h2>教师</h2>
+    <a class="btn ghost block" href="/host">创建 / 进入房间 →</a>
+    <p class="note" style="margin-top:10px">在教师页导入名单、出题、收卷、导出成绩</p>
+  </div>
+</main>
+<div id="toast"></div>
+<script src="/net.js"></script>
+<script>
+  const urlRoom = new URLSearchParams(location.search).get('room');
+  if (urlRoom) $('#room').value = urlRoom.trim().toUpperCase();
+  const last = JSON.parse(localStorage.getItem('cb_profile') || 'null');
+  if (last && last.sid) $('#sid').value = last.sid;
+  if (last && last.name) $('#name').value = last.name;
+
+  $('#room').addEventListener('input', e => { e.target.value = e.target.value.toUpperCase(); });
+
+  $('#stuForm').addEventListener('submit', e => {
+    e.preventDefault();
+    const room = $('#room').value.trim().toUpperCase();
+    const sid = $('#sid').value.trim();
+    const name = $('#name').value.trim();
+    if (!room) return toast('请输入房间号');
+    if (!sid && !name) return toast('请输入学号或姓名');
+    localStorage.setItem('cb_profile', JSON.stringify({ room, sid, name }));
+    location.href = '/play';
+  });
+</script>
+</body>
+</html>

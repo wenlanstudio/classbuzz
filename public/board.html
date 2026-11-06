@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>classbuzz · 大屏</title>
+<link rel="stylesheet" href="/style.css">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%235b8cff'/%3E%3Cpath d='M9 16.5l5 5 9-11' fill='none' stroke='%23fff' stroke-width='3.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+</head>
+<body class="board">
+<header class="top">
+  <span id="conn" class="dot"></span>
+  <span>classbuzz</span>
+  <span>房间 <b id="hcode">----</b></span>
+  <span>在线 <b id="hpc">0</b></span>
+  <span class="grow"></span>
+  <span>已交 <b id="hprog">0/0</b></span>
+</header>
+<main id="view" class="wide"><div class="card center">连接中…</div></main>
+<div id="toast"></div>
+<script src="/net.js"></script>
+<script>
+'use strict';
+const ROOM = (new URLSearchParams(location.search).get('room') || '').trim().toUpperCase();
+
+const S = { phase: 'idle', question: null, lastResult: null, answered: 0, total: 0, pc: 0, joinUrl: '' };
+
+const buzz = new Buzz({
+  onOpen: () => buzz.send({ type: 'join', room: ROOM, spectate: true }),
+  onStatus: s => $('#conn').className = 'dot ' + (s === 'online' ? 'on' : 'off'),
+});
+
+buzz.on('join_ok', m => { apply(m.snapshot); heroQR(); });
+buzz.on('sync', m => apply(m.snapshot));
+buzz.on('join_fail', m => fatal(m.reason));
+buzz.on('question_open', m => { S.phase = 'open'; S.question = m; S.answered = 0; S.total = m.total || 0; render(); });
+buzz.on('progress', m => {
+  S.answered = m.answered; S.total = m.total;
+  $('#hprog').textContent = `${m.answered}/${m.total}`;
+  const el = $('#pnum'); if (el) el.textContent = `${m.answered} / ${m.total}`;
+});
+buzz.on('question_result', m => { S.phase = 'revealed'; S.lastResult = m; render(); });
+buzz.on('round_closed', () => { S.phase = 'idle'; S.question = null; S.lastResult = null; render(); });
+// 老师清了成绩：揭晓态里的榜单要跟着换成新的。分布与最快是那题的史实，不动。
+buzz.on('scores_reset', m => {
+  if (S.phase === 'revealed' && S.lastResult) {
+    S.lastResult = { ...S.lastResult, leaderboard: m.leaderboard || [] };
+  }
+  render();
+});
+buzz.on('room_state', m => { S.pc = m.playerCount; $('#hpc').textContent = m.playerCount; const el = $('#bpc'); if (el) el.textContent = m.playerCount; });
+
+function apply(s) {
+  S.phase = s.phase;
+  S.codeShown = s.code || ROOM;
+  S.question = s.question;
+  S.lastResult = s.lastResult;
+  S.answered = s.question ? s.question.answered : 0;
+  S.total = s.question ? s.question.total : s.playerCount;
+  S.pc = s.playerCount;
+  $('#hcode').textContent = s.code || ROOM;
+  $('#hpc').textContent = s.playerCount || 0;
+  $('#hprog').textContent = `${S.answered}/${S.total}`;
+  render();
+}
+
+const LETTERS = 'ABCDEF';
+
+function render() {
+  const v = $('#view');
+  if (S.phase === 'open' && S.question) {
+    const q = S.question;
+    v.innerHTML = `<div class="card" style="display:flex;flex-direction:column;gap:14px;flex:1">
+      <div class="bar cd" style="height:14px"><i id="cdbar"></i></div>
+      <div class="stem">${esc(q.stem)}</div>
+      <div class="opts" style="flex:1">${q.options.map((t, i) => `
+        <div class="opt o${i} locked" style="cursor:default"><span class="abc">${LETTERS[i]}</span><span>${esc(t)}</span></div>`).join('')}</div>
+      <div class="center">已提交 <span id="pnum" class="count-hero" style="color:var(--acc)">${S.answered}</span><span class="muted" style="font-size:.5em"> / ${q.total || S.total} 人</span></div>
+    </div>`;
+    return;
+  }
+  if (S.phase === 'revealed' && S.lastResult) {
+    const r = S.lastResult;
+    const max = Math.max(1, ...r.distribution);
+    const top = r.leaderboard.slice(0, 10);
+    const topScore = Math.max(1, top[0] ? top[0].score : 1);
+    v.innerHTML = `<div class="card">
+      <div class="muted" style="margin-bottom:8px">正确答案：${LETTERS[r.answer]} · ${esc(r.options[r.answer])}</div>
+      <div class="dist">${r.options.map((t, i) => `
+        <div class="drow ${i === r.answer ? 'hit' : ''}">
+          <b style="background:var(--o${i});border-radius:8px;width:1.6em;height:1.6em;display:flex;align-items:center;justify-content:center">${LETTERS[i]}</b>
+          <div class="dtrack"><div class="dbar" style="width:${r.distribution[i] / max * 100}%;background:var(--o${i})"></div></div>
+          <span class="dn">${r.distribution[i]} 人</span>
+        </div>`).join('')}</div>
+      ${r.fastest ? `<p class="center" style="margin-top:2vh">⚡ 本题最快：<b>${esc(r.fastest.name)}</b> ${(r.fastest.elapsedMs / 1000).toFixed(1)}s</p>` : ''}
+    </div>
+    <div class="card" style="flex:1">
+      <h2>排行榜</h2>
+      <div class="lb" style="gap:1.2vh">${top.map(e => `
+        <div class="lbrow" style="font-size:1.05em;padding:.5em 1em">
+          <span class="rk">${e.rank}</span>
+          <span class="nm">${esc(e.name)}</span>
+          <div class="dtrack" style="width:26%;height:.7em"><div class="dbar" style="width:${e.score / topScore * 100}%;background:var(--acc)"></div></div>
+          <span class="sc">${e.score}</span>
+        </div>`).join('')}</div>
+    </div>`;
+    return;
+  }
+  // idle：入房引导（二维码 + 房间号 + 人数）
+  // 二维码由 S.joinUrl 驱动，不能只在 join_ok 画一次：一题结束回到 idle 会重绘整页。
+  const qrSrc = S.joinUrl ? '/qr?text=' + encodeURIComponent(S.joinUrl) : '';
+  v.innerHTML = `<div class="board-hero">
+    <div class="code-hero" id="bcode">${esc(S.codeShown || ROOM || '----')}</div>
+    <img id="bqr" class="qr ${qrSrc ? '' : 'hidden'}" ${qrSrc ? 'src="' + qrSrc + '"' : ''} alt="入房二维码">
+    <div class="muted" id="bjoin">${esc(S.joinUrl || '')}</div>
+    <div style="font-size:1.2em">当前在线 <b id="bpc" style="color:var(--acc)">${S.pc}</b> 人</div>
+    <div class="muted">等待老师出题…</div>
+  </div>`;
+}
+
+// 入房地址优先级：?public= 显式覆盖 > 服务端 public-url.txt > 页面自身公网域名 > /lan 局域网。
+// 与教师页 setJoinHost() 同口径；穿透模式下大屏也必须编公网地址，扫 192.168.x.x 学生进不来。
+async function joinBase() {
+  const override = new URLSearchParams(location.search).get('public');
+  if (override) return override.replace(/\/+$/, '');
+
+  try {
+    const r = await fetch('/api/config', { cache: 'no-store' });
+    if (r.ok) {
+      const base = (await r.json()).publicBase || '';
+      if (base) return base.replace(/\/+$/, '');
+    }
+  } catch {}
+
+  const priv = /^(localhost|127\.0\.0\.1|0\.0\.0\.0|::1)$|^192\.168\.|^10\.|^172\.(1[6-9]|2\d|3[01])\./;
+  if (!priv.test(location.hostname)) return location.origin;
+
+  // 没配公网地址才退回局域网；端口按页面实际访问端口补（从公网域名进来时 port 为空，不能拼）。
+  try {
+    const r = await fetch('/lan');
+    const { ips, local } = await r.json();
+    const host = local || (ips && ips[0]) || location.hostname;
+    const port = location.port ? ':' + location.port : '';
+    return `http://${host}${port}`;
+  } catch {
+    return location.origin;
+  }
+}
+
+async function heroQR() {
+  try {
+    S.joinUrl = `${await joinBase()}/?room=${ROOM}`;
+    const img = $('#bqr'), txt = $('#bjoin');
+    if (img) { img.src = '/qr?text=' + encodeURIComponent(S.joinUrl); img.classList.remove('hidden'); }
+    if (txt) txt.textContent = S.joinUrl;
+  } catch {}
+}
+
+setInterval(() => {
+  if (S.phase !== 'open' || !S.question) return;
+  const total = S.question.limitSec * 1000;
+  const remain = Math.max(0, S.question.deadline - Date.now());
+  const bar = $('#cdbar');
+  if (bar) bar.style.width = (remain / total * 100) + '%';
+}, 200);
+
+function fatal(msg) {
+  buzz.close();
+  $('#view').innerHTML = `<div class="board-hero">
+    <div style="font-size:1.6em">😔 ${esc(msg)}</div>
+    <div class="muted">请从教师端「打开大屏」链接进入</div></div>`;
+}
+
+if (!ROOM) fatal('链接缺少房间号');
+else buzz.connect();
+</script>
+</body>
+</html>

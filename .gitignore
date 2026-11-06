@@ -1,0 +1,8 @@
+.run/
+node_modules/
+
+# 运行时竞答日志（非源码）
+data/
+
+# 本地公网/穿透部署地址（含个人域名，勿上传）
+public-url.txt
